@@ -1,28 +1,130 @@
 module csr_register();
 
-input Instruction_address_misaligned;	//exception
-input Instruction_access_fault;			//exception
-input Illegal_instruction;				//exception
-input Breakpoint;						//exception
-input Load_address_misaligned;			//exception
-input Load_access_fault;				//exception
-input Store_address_misaligned;			//exception
-input Store_access_fault;				//exception
-input Ecall; 							//exception
+input Instruction_address_misaligned;			//exception request
+input Instruction_access_fault;					//exception request
+input Illegal_instruction;						//exception request
+input Breakpoint;								//exception request
+input Load_address_misaligned;					//exception request
+input Load_access_fault;						//exception request
+input Store_address_misaligned;					//exception request
+input Store_access_fault;						//exception request
+input Ecall; 									//exception request
+input Soft_interrupt;							//interrupt request
+input Timer_interrupt;							//interrupt request
+input External_interrupt;						//interrupt request
 
-input Soft_interrupt;					//interrupt
-input Timer_interrupt;					//interrupt
-input External_interrupt;				//interrupt
+input data_reg;									//CSRRW register data input
+input data_imm;									//CSRRW immediate data input
+input addr;  									//CSRRW index addr
+input WR;										//CSRRW Write enable
+output data_out;								//CSRRW data out
 
-input data_reg;
-input data_imm;
-input addr;
-input WR;
-output data_out;
+input [31:0]IN,ID_EXE_IN,IF_ID_IN,MEM_addr;		//options for wrong instruction
+input [31:0]PC,ID_EXE_PC,IF_ID_PC,EXE_MEM_PC;	//options for returning PC
 
-wire data_in;
-assign data_in=CSR_OP[2]?{27'b0,data_imm},data_reg;
-reg data_wr;
+							
+
+reg trap_WR,mtval_WR;							//status,mepc,mtval,mcause register write enable during in trap
+task exception_Write;
+trap_WR		<=1'b1;
+mtval_WR	<=1'b1;
+endtask
+
+task interrupt_Write;
+trap_WR		<=1'b1;
+mtval_WR	<=1'b0;
+endtask
+
+reg [30:0]code_in;								//interrupt or exception code
+reg interrupt_in;								//interrupt or exception
+reg pc_in_sel;									//choose the right options for return PC or wrong instruction
+always@*
+begin
+	casez({	Instruction_address_misaligned,		//priority encoder to encode interrupt or exception and to encode interrupt or exception as well as trap enable
+			Instruction_access_fault,
+			Illegal_instruction,
+			Breakpoint,
+			Load_address_misaligned,
+			Load_access_fault,
+			Store_address_misaligned,
+			Store_access_fault,
+			Ecall
+			MSIP
+			MTIP
+			MEIP;
+			})
+	12'b1???_????_????:	begin
+					code_in=31'd0;
+					interrupt_in=1'd0;
+					exception_Write;
+					end
+	12'b01??_????_????:	begin
+					code_in=31'd1;
+					interrupt_in=1'd0;
+					exception_Write;
+					end
+	12'b001?_????_????:	begin
+					code_in=31'd2;
+					interrupt_in=1'd0;
+					exception_Write;
+					end
+	12'b0001_????_????:	begin
+					code_in=31'd3;
+					interrupt_in=1'd0;
+					exception_Write;
+					end
+	12'b0000_1???_????:	begin
+					code_in=31'd4;
+					interrupt_in=1'd0;
+					exception_Write;
+					end
+	12'b0000_01??_????:	begin
+					code_in=31'd5;
+					interrupt_in=1'd0;
+					exception_Write;
+					end
+	12'b0000_001?_????:	begin
+					code_in=31'd6;
+					interrupt_in=1'd0;
+					exception_Write;
+					end
+	12'b0000_0001_????:	begin
+					code_in=31'd7;
+					interrupt_in=1'd0;
+					exception_Write;
+					end
+	12'b0000_0000_1???:	begin
+					code_in=31'd11;
+					interrupt_in=1'd0;
+					exception_Write;
+					end
+	12'b0000_0000_01??:	begin
+					code_in=31'd3;
+					interrupt_in=1'd1;
+					interrupt_Write;
+					end	
+	12'b0000_0000_001?:	begin
+					code_in=31'd7;
+					interrupt_in=1'd1;
+					interrupt_Write;
+					end	
+	12'b0000_0000_0001:	begin
+					code_in=31'd11;
+					interrupt_in=1'd1;
+					interrupt_Write;
+					end						
+	default：begin
+					code_in=31'bx;
+					interrupt_in==1'bx;
+					trap_WR		<=1'b0;
+					mtval_WR	<=1'b0;
+			 end
+	endcase
+end
+
+wire data_in;										//choose data or set bits or clear bits from register or immediate
+assign data_in=CSR_OP[2]?{27'b0,data_imm},data_reg;	
+reg data_wr;										//data for writing CSRRW or CSRRC or CSRRS 
 always@*
 begin
 	casez(CSR_OP[1:0])
@@ -34,20 +136,19 @@ begin
 		end
 end
 
-wire misa,mvendorid,marchid,mimpid,marpid,mhartid;
+wire misa,mvendorid,marchid,mimpid,marpid,mhartid;	//which are supported to be configuration information,they should be hardwire
+assign [31:0]misa=		`misa;						//hardwire
+assign [31:0]mvendorid= `mvendorid;					//hardwire
+assign [31:0]marchid=	`marchid;					//hardwire
+assign [31:0]mimpid=	`mimpid;					//hardwire
+assign [31:0]marpid=	`marpid;					//hardwire
+assign [31:0]mhartid=	`mhartid;					//hardwire
 
-assign [31:0]misa=		`misa;			//hardwire
-assign [31:0]mvendorid= `mvendorid;		//hardwire
-assign [31:0]marchid=	`marchid;		//hardwire
-assign [31:0]mimpid=	`mimpid;		//hardwire
-assign [31:0]marpid=	`marpid;		//hardwire
-assign [31:0]mhartid=	`mhartid;		//hardwire
-
-reg [31:0]mhpmevent[3:31];				//counter
-reg [63:0]mhpmcounter[3:31];			//counter
+reg [31:0]mhpmevent[3:31];							//event 
+reg [63:0]mhpmcounter[3:31];						//event counter
 genvar i;
-generate for (i=3;i<32;i=i+1) begin: r_loop
-	always@(posedge clk and negedge)
+generate for (i=3;i<32;i=i+1) begin: r_loop			//event set and event counter, when instruction equals to data in event and counter receives the instruction hand over,the event counter will add 1
+	always@(posedge clk and negedge)				
 		begin
 			if(!rst)
 				begin
@@ -64,7 +165,8 @@ generate for (i=3;i<32;i=i+1) begin: r_loop
 		end
 								end
 endgenerate
-reg [63:0]mcycle,minstret;				//counter 
+
+reg [63:0]mcycle,minstret;							//performance counter 
 always@(posedge clk and negedge rst)
 begin
 	if(!rst)
@@ -80,51 +182,71 @@ begin
 		end
 end
 
-wire [31:0]mip,mie,status,mcause,mtvec,mcountinhibit;
-reg  [31:0]mtval,mepc,msrach;
-always@(posedge clk and negedge rst)
+reg  [31:0]mtval,mepc,msrach;						//parts of CSRs without hardwire bits
+
+always@(posedge clk and negedge rst)				//mtval 
 begin
 	if(!rst)
 	mtval<=32'b0;
 	else
-	if(WR && addr==0x0a)
-	mtval<=data_wr;
+		begin
+		if(WR && addr==0x0a)
+			mtval<=data_wr;
+		if(trap_WR)
+			casez(pc_in_sel)
+			2'b00:mepc<=IN;
+			2'b01:mepc<=IF_ID_IN;
+			2'b10:mepc<=MEM_addr;
+			2'b11:mepc<=ID_EXE_IN;
+			endcase	
+		end
 end
 
-always@(posedge clk and negedge rst)
+
+always@(posedge clk and negedge rst)				//mepc
 begin
 	if(!rst)
-	mepc<=32'b0;
+		mepc<=32'b0;
 	else
-	if(WR && addr==0x0a)
-	mepc<=data_wr;
+		begin
+		if(WR && addr==0x0b)
+			mepc<=data_wr;
+		if(trap_WR)
+			casez(pc_in_sel)
+			2'b00:mepc<=PC;
+			2'b01:mepc<=IF_ID_PC;
+			2'b10:mepc<=EXE_MEM_PC;
+			2'b11:mepc<=ID_EXE_PC;
+			endcase
+		end
 end
 
-always@(posedge clk and negedge rst)
+always@(posedge clk and negedge rst)				//msrach
 begin
 	if(!rst)
 	msrach<=32'b0;
 	else
-	if(WR && addr==0x0a)
+	if(WR && addr==0x0e)
 	msrach<=data_wr;
 end
 
-reg MEIP,MTIP,MSIP;					//register MIE for machine local interrupt enable 
-assign mip[31:16]	=16'b0;				//using for platform custom interrupt
-assign mip[15:12]	=4'b0;				//reserve furthur
-assign mip[11]		=MEIP;				//machine extral interrupt pending
-assign mip[10]		=1'b0;				//reserve furthur
-assign mip[9]		=1'b0;				//supervision interrupt pending
-assign mip[8]		=1'b0;				//user interrupt pending
-assign mip[7]		=MTIP;				//machine miter interrupt pending
-assign mip[6]		=1'b0;				//
-assign mip[5]		=1'b0;				//
-assign mip[4]		=1'b0;				//
-assign mip[3]		=MSIP;				//machine software interrupt pending
-assign mip[2]		=1'b0;				//
-assign mip[1]		=1'b0;				//
-assign mip[0]		=1'b0;				//
-
+wire [31:0]mip,mie,status,mcause,mtvec,mcountinhibit;	//part of CSRs which are hardwire some bits
+														//MIP 
+reg MEIP,MTIP,MSIP;										//register MIE for machine local interrupt enable 
+assign mip[31:16]	=16'b0;								//using for platform custom interrupt
+assign mip[15:12]	=4'b0;								//reserve furthur
+assign mip[11]		=MEIP;								//machine extral interrupt pending
+assign mip[10]		=1'b0;								//reserve furthur
+assign mip[9]		=1'b0;								//supervision interrupt pending
+assign mip[8]		=1'b0;								//user interrupt pending
+assign mip[7]		=MTIP;								//machine miter interrupt pending
+assign mip[6]		=1'b0;								//
+assign mip[5]		=1'b0;								//
+assign mip[4]		=1'b0;								//
+assign mip[3]		=MSIP;								//machine software interrupt pending
+assign mip[2]		=1'b0;								//
+assign mip[1]		=1'b0;								//
+assign mip[0]		=1'b0;								//
 always@(posedge clk and negedge rst)
 begin
 	if(!rst)
@@ -142,7 +264,7 @@ begin
 end
 
 
-reg MEIE,MTIE,MSIE;
+reg MEIE,MTIE,MSIE;										//MIE
 assign mie[31:16]	=16'b0;
 assign mie[15:12]	=4'b0;
 assign mie[11]		=MEIE;
@@ -176,7 +298,7 @@ begin
 		end
 end
 
-reg MPIE,MIE;
+reg MPIE,MIE;											//status
 assign status[31]	=1'b0;
 assign status[30:23]=8'b0;
 assign status[22]	=1'b0;
@@ -213,7 +335,7 @@ begin
 			end
 end
 
-reg INTERRUPT;
+reg INTERRUPT;											//mcause
 reg [30:0]CODE;
 assign mcause[31]	=INTERRUPT;
 assign mcause[30:0]	=CODE;
@@ -231,10 +353,15 @@ begin
 				INTERRUPT<=data_wr[31]
 				CODE     <=data_wr[30:0]
 				end
+			if(trap_WR)
+				begin
+				INTERRUPT<=interrupt_in;
+				CODE     <=code_in;
+				end
 		end
 end
 
-reg[29:0]BASE;
+reg[29:0]BASE;											//mtvec
 reg[1:0]MODE;
 assign mtvec[31:2]=BASE;
 assign mtvec[1:0]=MODE;
@@ -256,7 +383,7 @@ begin
 end
 
 
-reg [28:0]HPM;
+reg [28:0]HPM;											//mcountinhibit
 reg IR,TM,CY;
 assign mcountinhibit[31:3]=HPM;
 assign mcountinhibit[2]=IR;
@@ -283,8 +410,8 @@ begin
 		end
 end
 
-//reg_MMP
-always @*
+
+always @*												//register map
 begin
 	casez(addr)
 	8'h01: data_out<=misa;
