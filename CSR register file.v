@@ -13,11 +13,18 @@ input Soft_interrupt;							//interrupt request
 input Timer_interrupt;							//interrupt request
 input External_interrupt;						//interrupt request
 
+input mret;										//MRET TRAP RETURN  we need IF stage to translate the MRET and to choose the next_PC from mepc
+
 input data_reg;									//CSRRW register data input
 input data_imm;									//CSRRW immediate data input
 input addr;  									//CSRRW index addr
 input WR;										//CSRRW Write enable
 output data_out;								//CSRRW data out
+
+output [31:0]PC_next;
+assign PC_next=mert?mepc_out:trap_PC_next;
+wire [31:0]mepc_out;
+assign mepc_out=mepc;
 
 input [31:0]IN,ID_EXE_IN,IF_ID_IN,MEM_addr;		//options for wrong instruction
 input [31:0]PC,ID_EXE_PC,IF_ID_PC,EXE_MEM_PC;	//options for returning PC
@@ -152,14 +159,14 @@ generate for (i=3;i<32;i=i+1) begin: r_loop			//event set and event counter, whe
 		begin
 			if(!rst)
 				begin
-				mhpmevent[i]  	<=32'b0;
-				mhpmcounter[i]	<=64'b0;
+				mhpmevent[i]  	<=32'b0;			//29 events reset
+				mhpmcounter[i]	<=64'b0;			//29 eventcounters reset
 				end
 			else
 				begin
-				if(addr==8'b0010_0000+i && WR)
-				mhpmevent[i]	<=data_wr;
-				if(mhpmevent!=32'b0 && hand && instruction==mhpmevent[i])
+				if(addr==8'b0010_0000+i && WR)		//29 events CSRRW or CSRRC or  CSRRS
+				mhpmevent[i]	<=data_wr;				
+				if(mhpmevent!=32'b0 && hand && instruction==mhpmevent[i])	//29 eventcounters add condition
 				mhpmcounter[i]	<=mhpmcounter[i]+1'b1;
 				end			
 		end
@@ -171,8 +178,8 @@ always@(posedge clk and negedge rst)
 begin
 	if(!rst)
 		begin
-			mcycle<=64'b0;
-			minstret<=64'b0;
+			mcycle<=64'b0;							//clk cycle couner reset
+			minstret<=64'b0;						//the counter which logs number of  instruction executed.it resets to 0
 		end
 	else
 		begin
@@ -187,17 +194,17 @@ reg  [31:0]mtval,mepc,msrach;						//parts of CSRs without hardwire bits
 always@(posedge clk and negedge rst)				//mtval 
 begin
 	if(!rst)
-	mtval<=32'b0;
+	mtval<=32'b0;									//mtval reset
 	else
 		begin
-		if(WR && addr==0x0a)
+		if(WR && addr==0x0a)						//mtval RC RS RW
 			mtval<=data_wr;
-		if(trap_WR)
+		if(trap_WR)									//when the trap happens,it will record the error instruction or error memory address 
 			casez(pc_in_sel)
-			2'b00:mepc<=IN;
-			2'b01:mepc<=IF_ID_IN;
-			2'b10:mepc<=MEM_addr;
-			2'b11:mepc<=ID_EXE_IN;
+			2'b00:mtval<=IN;
+			2'b01:mtval<=IF_ID_IN;
+			2'b10:mtval<=MEM_addr;
+			2'b11:mtval<=ID_EXE_IN;
 			endcase	
 		end
 end
@@ -206,12 +213,12 @@ end
 always@(posedge clk and negedge rst)				//mepc
 begin
 	if(!rst)
-		mepc<=32'b0;
+		mepc<=32'b0;								//mepc reset
 	else
 		begin
-		if(WR && addr==0x0b)
+		if(WR && addr==0x0b)						//mepc RW RS RC
 			mepc<=data_wr;
-		if(trap_WR)
+		if(trap_WR)									//when  the trap happens,it will record the PC of error instruction or error memory address
 			casez(pc_in_sel)
 			2'b00:mepc<=PC;
 			2'b01:mepc<=IF_ID_PC;
@@ -224,9 +231,9 @@ end
 always@(posedge clk and negedge rst)				//msrach
 begin
 	if(!rst)
-	msrach<=32'b0;
+	msrach<=32'b0;									//msrach reset
 	else
-	if(WR && addr==0x0e)
+	if(WR && addr==0x0e)							//msrach RW RS RC
 	msrach<=data_wr;
 end
 
@@ -249,15 +256,15 @@ assign mip[1]		=1'b0;								//
 assign mip[0]		=1'b0;								//
 always@(posedge clk and negedge rst)
 begin
-	if(!rst)
+	if(!rst)											//mip reset
 		begin
-			MEIP<=1'b0;
-			MTIP<=1'b0;
-			MSIP<=1'b0;
+			MEIP<=1'b0;									
+			MTIP<=1'b0;										
+			MSIP<=1'b0;									
 		end
 	else
-		begin
-			MEIP<=External_interrupt;
+		begin											//it is read_only,These are the interrupt pending signals
+			MEIP<=External_interrupt;				
 			MTIP<=Timer_interrupt;
 			MSIP<=Soft_interrupt;
 		end
@@ -279,9 +286,9 @@ assign mie[3]		=MSIE;
 assign mie[2]		=1'b0;
 assign mie[1]		=1'b0;
 assign mie[0]		=1'b0;
-always@(posedge clk and negedge rst)
+always@(posedge clk and negedge rst)					
 begin
-	if(!rst)
+	if(!rst)											//MIE reset
 		begin
 		MEIE<=1'b1;
 		MTIE<=1'b1;
@@ -289,7 +296,7 @@ begin
 		end
 	else
 		begin
-			if(WR && addr==8'h08)
+			if(WR && addr==8'h08)						//MIE RW or RS or RC
 				begin
 				MEIE<=data_wr[11];
 				MTIE<=data_wr[7];
@@ -320,19 +327,30 @@ assign status[3]	=MIE;
 assign status[2]	=1'b0;
 assign status[1]	=1'b0;
 assign status[0]	=1'b0;
-always@(posedge clk and negedge rst)
+always@(posedge clk and negedge rst)					
 begin
-	if(!rst)
+	if(!rst)											//status reset
 		begin
 		MPIE<=1'b1;
 		MIE <=1'b1;
 		end
 	else
-		if(WR && addr==8'h07)
+		begin	
+		if(WR && addr==8'h07)							//status RW or RS or RC
 			begin
 			MPIE<=data_wr[7];
 			MIE <=data_wr[3];
 			end
+		if(trap_WR)										//MIE is global interrupt enable;when trap happens ,global interrupt enable will turn off
+			begin
+			MPIE<=MIE;
+			MIE <=1'b0;
+			end
+		if(mret)
+			begin
+			MPIE<=1'b1;
+			MIE <=MPIE;
+		end
 end
 
 reg INTERRUPT;											//mcause
@@ -341,19 +359,19 @@ assign mcause[31]	=INTERRUPT;
 assign mcause[30:0]	=CODE;
 always@(posedge clk and negedge rst)
 begin
-	if(!rst)
+	if(!rst)											//mcause reset
 		begin
 		INTERRUPT<=1'b0;
 		CODE<=31'b0;
 		end
 	else
 		begin
-			if(WR && addr==8'h0c)
+			if(WR && addr==8'h0c)						//mcause RW RS RC
 				begin
 				INTERRUPT<=data_wr[31]
 				CODE     <=data_wr[30:0]
 				end
-			if(trap_WR)
+			if(trap_WR)									//
 				begin
 				INTERRUPT<=interrupt_in;
 				CODE     <=code_in;
@@ -381,7 +399,21 @@ begin
 				end
 		end
 end
-
+reg [31:0]trap_PC_next;
+always@*
+begin
+case(mode)
+`base_mode  : trap_PC_next=`BASE;
+`vector_mode: begin
+		 if(INTERRUPT)
+			trap_PC_next=`BASE+CODE<<2;
+		 else
+			trap_PC_next=`BASE;
+		 end
+default：begin
+			trap_PC_next=`BASE;
+		 end
+end
 
 reg [28:0]HPM;											//mcountinhibit
 reg IR,TM,CY;
