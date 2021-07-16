@@ -1,3 +1,2 @@
 # RISCV
-interrupt control for riscv
-including csrsfile plic clint
+the core which has four pipeline stage 
